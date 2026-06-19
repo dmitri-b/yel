@@ -32,6 +32,7 @@ from .errors import (
     EXIT_OK,
     EXIT_OVERALL_TIMEOUT,
     AgentSayError,
+    ConfigError,
 )
 from .vad import SpeechState, TurnEndDetector, WebrtcVad
 
@@ -63,17 +64,24 @@ def _run_turn(text: str, settings: AgentSaySettings) -> int:
 
     monitor = None
     monitor_device = None
-    if settings.monitor_device is not None:
+    if not settings.speaker_output and not audio.is_virtual_output(settings.output_device):
+        raise ConfigError(
+            "--no-speaker-output requires an explicit virtual --out device such as BlackHole 2ch."
+        )
+
+    if settings.monitor_device is not None and settings.speaker_output:
         monitor_device = audio.resolve_output_device(settings.monitor_device)
         monitor = audio.SpeakerMonitor(
             settings.sample_rate, monitor_device, settings.frame_samples
         )
+    elif settings.monitor_device is not None:
+        _log("yel: --no-speaker-output set; not monitoring agent audio on speakers.")
 
     # When the prompt is routed to a silent virtual loopback (e.g. BlackHole),
     # the operator can't hear it. Mirror the prompt onto a real output so it's
     # audible: the --speakers monitor if set, else the system default speakers.
     prompt_mirror_device = None
-    if audio.is_virtual_output(settings.output_device):
+    if settings.speaker_output and audio.is_virtual_output(settings.output_device):
         prompt_mirror_device = (
             monitor_device
             if monitor_device is not None

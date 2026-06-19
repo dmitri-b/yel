@@ -129,6 +129,7 @@ Precedence (highest first): **CLI flags → environment variables → `.env` →
 | Output device    | `--out`             | `AGENT_SAY_OUT`         | system  |
 | Listen device    | `--listen`          | `AGENT_SAY_LISTEN`      | system  |
 | Speakers (monitor) | `--speakers`      | `AGENT_SAY_SPEAKERS`    | off     |
+| Speaker output   | `--no-speaker-output` | `AGENT_SAY_SPEAKER_OUTPUT=false` | on |
 | Transcribe reply | `--transcribe`      | `AGENT_SAY_TRANSCRIBE`  | off     |
 | Deepgram model   | `--deepgram-model`  | `AGENT_SAY_DEEPGRAM_MODEL` | nova-3 |
 | Deepgram key     | —                   | `DEEPGRAM_API_KEY`      | —       |
@@ -146,6 +147,21 @@ uv run yel config show
 uv run yel config path
 uv run yel doctor
 ```
+
+Quiet routing for shared spaces:
+
+```sh
+uv run yel \
+  --out "BlackHole 2ch" \
+  --listen "BlackHole 2ch" \
+  --no-speaker-output \
+  "what is a quick Greek recipe?"
+```
+
+`--no-speaker-output` disables the automatic real-speaker mirror that is normally
+used with virtual outputs, and disables live speaker monitoring even if
+`--speakers` is configured. It fails closed unless `--out` is an explicit
+virtual/loopback output.
 
 ## Exit codes
 

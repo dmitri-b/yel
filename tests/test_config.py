@@ -12,6 +12,7 @@ def test_defaults(monkeypatch):
     s = AgentSaySettings(_env_file=None)
     assert s.output_device is None
     assert s.listen_device is None
+    assert s.speaker_output is True
     assert s.start_timeout == 30.0
     assert s.end_silence == 1.2
     assert s.vad == 2
@@ -44,6 +45,12 @@ def test_transcribe_env_toggle(monkeypatch):
     monkeypatch.setenv("AGENT_SAY_TRANSCRIBE", "true")
     s = AgentSaySettings(_env_file=None)
     assert s.transcribe is True
+
+
+def test_speaker_output_env_toggle(monkeypatch):
+    monkeypatch.setenv("AGENT_SAY_SPEAKER_OUTPUT", "false")
+    s = AgentSaySettings(_env_file=None)
+    assert s.speaker_output is False
 
 
 def test_speakers_alias(monkeypatch):

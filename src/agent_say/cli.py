@@ -46,7 +46,11 @@ app = typer.Typer(
 
 @app.command()
 def speak(
-    text: str | None = typer.Argument(None, help="Text to speak to the agent."),
+    text: list[str] | None = typer.Argument(
+        None,
+        help="Text to speak to the agent. Multiple words are joined, so quoting "
+        "is optional: `yel hello how are you`.",
+    ),
     devices: bool = typer.Option(False, "--devices", help="List audio devices and exit."),
     out: str | None = typer.Option(
         None, "--out", help="Output device for generated speech."
@@ -58,6 +62,11 @@ def speak(
         None,
         "--speakers",
         help="Play the agent's captured audio live on this output device.",
+    ),
+    speaker_output: bool | None = typer.Option(
+        None,
+        "--speaker-output/--no-speaker-output",
+        help="Allow generated prompts and monitored replies to play on real speakers.",
     ),
     start_timeout: float | None = typer.Option(
         None, "--start-timeout", help="Seconds to wait for the agent to start speaking."
@@ -96,6 +105,7 @@ def speak(
 
     if not text:
         raise typer.BadParameter("Missing text to speak.")
+    spoken_text = " ".join(text)
 
     response_timeout: float | None = None
     if timeout is not None:
@@ -108,6 +118,7 @@ def speak(
         output_device=out,
         listen_device=listen,
         monitor_device=speakers,
+        speaker_output=speaker_output,
         start_timeout=start_timeout,
         end_silence=end_silence,
         overall_timeout=overall_timeout,
@@ -117,7 +128,7 @@ def speak(
         transcribe=transcribe,
         deepgram_model=deepgram_model,
     )
-    raise typer.Exit(run_turn(text=text, settings=settings))
+    raise typer.Exit(run_turn(text=spoken_text, settings=settings))
 
 
 admin_app = typer.Typer(

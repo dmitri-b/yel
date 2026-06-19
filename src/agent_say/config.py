@@ -57,6 +57,11 @@ class AgentSaySettings(BaseSettings):
         ),
         description="Speakers to play the agent's captured audio on (live monitor).",
     )
+    speaker_output: bool = Field(
+        default=True,
+        validation_alias=AliasChoices("AGENT_SAY_SPEAKER_OUTPUT"),
+        description="Allow audio to be sent to real speaker outputs.",
+    )
 
     start_timeout: float = Field(default=30.0, gt=0)
     end_silence: float = Field(default=1.2, gt=0)

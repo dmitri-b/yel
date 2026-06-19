@@ -75,6 +75,7 @@ def test_cli_overrides_reach_settings(monkeypatch):
             "BlackHole 2ch",
             "--speakers",
             "MacBook Pro Speakers",
+            "--no-speaker-output",
         ],
     )
     assert result.exit_code == 0
@@ -83,6 +84,7 @@ def test_cli_overrides_reach_settings(monkeypatch):
     assert s.end_silence == 0.5
     assert s.output_device == "BlackHole 2ch"
     assert s.monitor_device == "MacBook Pro Speakers"
+    assert s.speaker_output is False
 
 
 def _capture_settings(captured):
