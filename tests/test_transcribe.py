@@ -1,8 +1,7 @@
-"""Tests for the Deepgram transcription module (network mocked)."""
+"""Tests for the Deepgram streaming transcription module (websocket mocked)."""
 
-import io
 import json
-import wave
+import sys
 
 import numpy as np
 import pytest
@@ -16,31 +15,42 @@ def _tone(seconds=0.2, sr=16000):
     )
 
 
-def test_pcm16_wav_bytes_roundtrip():
+def _fake_websockets(connect):
+    return type("W", (), {"connect": staticmethod(connect)})
+
+
+def test_pcm16_bytes_roundtrip():
     samples = _tone()
-    wav = dg._pcm16_wav_bytes(samples, 16000)
-    with wave.open(io.BytesIO(wav)) as w:
-        assert w.getnchannels() == 1
-        assert w.getsampwidth() == 2
-        assert w.getframerate() == 16000
-        assert w.getnframes() == len(samples)
+    pcm = dg._pcm16_bytes(samples, 16000)
+    assert len(pcm) == len(samples) * 2  # 16-bit mono
+    back = np.frombuffer(pcm, dtype="<i2")
+    assert back.shape[0] == samples.shape[0]
 
 
-def test_extract_transcript():
-    payload = {
-        "results": {"channels": [{"alternatives": [{"transcript": "hello world  "}]}]}
+def test_stream_url_has_streaming_params():
+    url = dg._stream_url("nova-3", 16000, "en")
+    assert url.startswith("wss://api.deepgram.com/v1/listen?")
+    assert "model=nova-3" in url
+    assert "encoding=linear16" in url
+    assert "sample_rate=16000" in url
+    assert "interim_results=false" in url
+
+
+def test_final_from_message_extracts_only_finals():
+    final = {
+        "type": "Results",
+        "is_final": True,
+        "channel": {"alternatives": [{"transcript": "hello world  "}]},
     }
-    assert dg._extract_transcript(payload) == "hello world"
+    assert dg._final_from_message(final) == "hello world"
 
+    interim = dict(final, is_final=False)
+    assert dg._final_from_message(interim) is None
 
-def test_extract_transcript_empty_alternatives():
-    payload = {"results": {"channels": [{"alternatives": []}]}}
-    assert dg._extract_transcript(payload) == ""
+    empty = {"type": "Results", "is_final": True, "channel": {"alternatives": [{"transcript": "  "}]}}
+    assert dg._final_from_message(empty) is None
 
-
-def test_extract_transcript_malformed():
-    with pytest.raises(dg.TranscriptionError):
-        dg._extract_transcript({"nope": True})
+    assert dg._final_from_message({"type": "Metadata"}) is None
 
 
 def test_missing_key_raises():
@@ -52,45 +62,70 @@ def test_empty_audio_returns_empty():
     assert dg.transcribe(np.zeros(0, dtype=np.float32), 16000, api_key="k") == ""
 
 
-def test_transcribe_posts_and_parses(monkeypatch):
+class _FakeWS:
+    """Minimal async websocket: collects sends, replays scripted server messages."""
+
+    def __init__(self, server_messages):
+        self._server = list(server_messages)
+        self.sent = []
+        self.closed = False
+
+    async def send(self, data):
+        self.sent.append(data)
+
+    def __aiter__(self):
+        self._iter = iter(self._server)
+        return self
+
+    async def __anext__(self):
+        try:
+            return next(self._iter)
+        except StopIteration:
+            raise StopAsyncIteration
+
+    async def close(self):
+        self.closed = True
+
+
+def test_transcribe_streams_audio_and_joins_finals(monkeypatch):
     captured = {}
+    server_messages = [
+        json.dumps({"type": "Results", "is_final": False,
+                    "channel": {"alternatives": [{"transcript": "hi"}]}}),
+        json.dumps({"type": "Results", "is_final": True,
+                    "channel": {"alternatives": [{"transcript": "hi there,"}]}}),
+        json.dumps({"type": "Results", "is_final": True,
+                    "channel": {"alternatives": [{"transcript": "how are you?"}]}}),
+    ]
+    fake = _FakeWS(server_messages)
 
-    class FakeResp:
-        def __enter__(self):
-            return self
+    async def fake_connect(url, **kwargs):
+        captured["url"] = url
+        headers = kwargs.get("additional_headers") or kwargs.get("extra_headers") or {}
+        captured["auth"] = headers.get("Authorization")
+        return fake
 
-        def __exit__(self, *a):
-            return False
+    monkeypatch.setitem(sys.modules, "websockets", _fake_websockets(fake_connect))
 
-        def read(self):
-            return json.dumps(
-                {"results": {"channels": [{"alternatives": [{"transcript": "hi there"}]}]}}
-            ).encode()
+    text = dg.transcribe(_tone(0.3), 16000, api_key="secret", model="nova-3")
 
-    def fake_urlopen(request, timeout=0):
-        captured["url"] = request.full_url
-        captured["auth"] = request.headers.get("Authorization")
-        captured["body_len"] = len(request.data)
-        return FakeResp()
-
-    # json.load reads from the response object; FakeResp.read returns bytes.
-    monkeypatch.setattr(dg.urllib.request, "urlopen", fake_urlopen)
-    monkeypatch.setattr(dg.json, "load", lambda resp: json.loads(resp.read()))
-
-    text = dg.transcribe(_tone(), 16000, api_key="secret", model="nova-3")
-    assert text == "hi there"
+    assert text == "hi there, how are you?"
+    assert captured["url"].startswith("wss://api.deepgram.com/v1/listen?")
     assert "model=nova-3" in captured["url"]
     assert captured["auth"] == "Token secret"
-    assert captured["body_len"] > 44  # WAV header + samples
+    audio_frames = [s for s in fake.sent if isinstance(s, (bytes, bytearray))]
+    control = [json.loads(s) for s in fake.sent if isinstance(s, str)]
+    assert len(audio_frames) >= 1
+    assert {"type": "Finalize"} in control
+    assert {"type": "CloseStream"} in control
+    assert fake.closed
 
 
-def test_http_error_becomes_transcription_error(monkeypatch):
-    import urllib.error
+def test_connect_failure_becomes_transcription_error(monkeypatch):
+    async def boom(url, **kwargs):
+        raise OSError("connection refused")
 
-    def boom(request, timeout=0):
-        raise urllib.error.HTTPError(request.full_url, 401, "Unauthorized", {}, io.BytesIO(b"bad key"))
-
-    monkeypatch.setattr(dg.urllib.request, "urlopen", boom)
+    monkeypatch.setitem(sys.modules, "websockets", _fake_websockets(boom))
     with pytest.raises(dg.TranscriptionError) as exc:
         dg.transcribe(_tone(), 16000, api_key="x")
-    assert "401" in str(exc.value)
+    assert "streaming failed" in str(exc.value).lower()
