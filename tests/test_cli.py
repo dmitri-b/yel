@@ -150,8 +150,11 @@ def test_config_show(monkeypatch):
 
 
 def test_doctor_runs(monkeypatch):
+    from agent_say import tts
+
     monkeypatch.setattr(cli, "print_devices", lambda: print("devices"))
+    monkeypatch.setattr(tts, "is_available", lambda: True)
+    monkeypatch.setattr(tts, "backend_name", lambda: "test")
     result = runner.invoke(cli.admin_app, ["doctor"])
-    # On this macOS host the 'say' backend is present -> exit 0.
     assert result.exit_code == 0
     assert "TTS backend" in result.stdout

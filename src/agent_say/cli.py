@@ -163,15 +163,16 @@ def config_path() -> None:
 
 @admin_app.command("doctor")
 def doctor() -> None:
-    """Check that the TTS backend and an audio output device are available."""
+    """Check that the host TTS backend and audio devices are available."""
     from . import tts
 
     ok = True
+    backend = tts.backend_name()
     if tts.is_available():
-        print("[ok] macOS 'say' TTS backend available")
+        print(f"[ok] {backend} TTS backend available")
     else:
         ok = False
-        print("[!!] macOS 'say' TTS backend NOT available")
+        print(f"[!!] {backend} TTS backend NOT available")
 
     try:
         print_devices()
