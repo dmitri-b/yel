@@ -1,7 +1,7 @@
 # yel
 
 Script spoken turns against a local voice agent. `yel` speaks a prompt out
-loud (macOS `say`), then listens for the agent's reply and blocks until the
+loud (macOS `say` or Windows SAPI), then listens for the agent's reply and blocks until the
 agent stops talking — so you can chain turns from the shell:
 
 ```sh
@@ -21,6 +21,12 @@ uv run yel --devices
 uv run yel "hello, can you hear me?"
 ```
 
+On Windows, `yel` uses the built-in SAPI voice through Windows PowerShell. Run
+`uv run yel doctor` first; if it can list audio devices and reports the Windows
+SAPI backend, text-to-speech is ready. You still need an audio route between
+`yel` and the agent, such as a virtual loopback device, headphones/open mic, or
+the agent's own test input path.
+
 Handy alias:
 
 ```sh
@@ -30,7 +36,7 @@ say-ai "first prompt" && say-ai "second prompt"
 
 ## How it works
 
-1. Render the prompt to speech with the macOS `say` command.
+1. Render the prompt to speech with the host TTS backend.
 2. Play it to the configured **output** device. If that device is a virtual
    loopback you can't hear (e.g. `BlackHole`), the prompt is *also* played on a
    real output — your `--speakers` monitor if set, otherwise the system default
