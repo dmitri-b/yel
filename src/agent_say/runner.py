@@ -42,6 +42,8 @@ _STATE_EXIT = {
     SpeechState.TIMEOUT_NO_SPEECH: EXIT_NO_SPEECH,
     SpeechState.TIMEOUT_OVERALL: EXIT_OVERALL_TIMEOUT,
 }
+DEFAULT_RMS_THRESHOLD = AgentSaySettings.model_fields["rms_threshold"].default
+VIRTUAL_LISTEN_RMS_THRESHOLD = 0.001
 
 
 def _log(msg: str) -> None:
@@ -61,6 +63,7 @@ def run_turn(text: str, settings: AgentSaySettings) -> int:
 def _run_turn(text: str, settings: AgentSaySettings) -> int:
     out_device = audio.resolve_output_device(settings.output_device)
     listen_device = audio.resolve_input_device(settings.listen_device)
+    listen_settings = _settings_for_listen_device(settings)
 
     monitor = None
     monitor_device = None
@@ -103,7 +106,7 @@ def _run_turn(text: str, settings: AgentSaySettings) -> int:
     else:
         _log("yel: listening for the agent's reply...")
     state, clip = _listen_for_turn_end(
-        listen_device, settings, monitor, record=settings.transcribe
+        listen_device, listen_settings, monitor, record=listen_settings.transcribe
     )
 
     if state is SpeechState.ENDED:
@@ -123,6 +126,15 @@ def _run_turn(text: str, settings: AgentSaySettings) -> int:
     if settings.transcribe and clip is not None and clip.size:
         _transcribe_and_print(clip, settings)
     return _STATE_EXIT[state]
+
+
+def _settings_for_listen_device(settings: AgentSaySettings) -> AgentSaySettings:
+    if (
+        settings.rms_threshold == DEFAULT_RMS_THRESHOLD
+        and audio.is_virtual_device(settings.listen_device)
+    ):
+        return settings.model_copy(update={"rms_threshold": VIRTUAL_LISTEN_RMS_THRESHOLD})
+    return settings
 
 
 def _transcribe_and_print(clip: np.ndarray, settings: AgentSaySettings) -> None:

@@ -71,3 +71,37 @@ def test_no_transcription_when_disabled(monkeypatch, capsys):
     monkeypatch.setattr(transcribe, "transcribe", must_not_call)
     settings = AgentSaySettings(_env_file=None, transcribe=False)
     assert runner.run_turn("hi", settings) == 0
+
+
+def test_virtual_listen_device_uses_lower_rms_floor(monkeypatch):
+    _patch_audio(monkeypatch)
+    seen = {}
+
+    def fake_listen(_device, settings, *_args, **_kwargs):
+        seen["rms_threshold"] = settings.rms_threshold
+        return SpeechState.ENDED, None
+
+    monkeypatch.setattr(runner, "_listen_for_turn_end", fake_listen)
+
+    settings = AgentSaySettings(_env_file=None, listen_device="BlackHole 2ch")
+    assert runner.run_turn("hi", settings) == 0
+    assert seen["rms_threshold"] == runner.VIRTUAL_LISTEN_RMS_THRESHOLD
+
+
+def test_explicit_rms_floor_is_not_changed_for_virtual_listen_device(monkeypatch):
+    _patch_audio(monkeypatch)
+    seen = {}
+
+    def fake_listen(_device, settings, *_args, **_kwargs):
+        seen["rms_threshold"] = settings.rms_threshold
+        return SpeechState.ENDED, None
+
+    monkeypatch.setattr(runner, "_listen_for_turn_end", fake_listen)
+
+    settings = AgentSaySettings(
+        _env_file=None,
+        listen_device="BlackHole 2ch",
+        rms_threshold=0.004,
+    )
+    assert runner.run_turn("hi", settings) == 0
+    assert seen["rms_threshold"] == 0.004

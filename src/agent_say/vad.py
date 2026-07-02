@@ -129,7 +129,14 @@ class TurnEndDetector:
 
 
 class WebrtcVad:
-    """Classify a single PCM frame as speech, gated by an RMS floor."""
+    """Classify a single PCM frame as speech, gated by an RMS floor.
+
+    WebRTC VAD is tuned for human microphone speech. Local voice agents can
+    produce vocoder audio that is clearly audible and transcribable but rejected
+    by WebRTC, especially through virtual loopback devices. Once the RMS floor is
+    crossed, treat sustained monitor energy as speech so scripted turns do not
+    wait until the start timeout despite having captured a real reply.
+    """
 
     def __init__(self, *, aggressiveness: int, sample_rate: int, rms_threshold: float) -> None:
         import webrtcvad
@@ -146,4 +153,4 @@ class WebrtcVad:
         if rms < self.rms_threshold:
             return False
         pcm16 = np.clip(frame * 32768.0, -32768, 32767).astype("<i2").tobytes()
-        return self._vad.is_speech(pcm16, self.sample_rate)
+        return self._vad.is_speech(pcm16, self.sample_rate) or rms >= self.rms_threshold

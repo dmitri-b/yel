@@ -123,6 +123,18 @@ def is_virtual_output(device: str | int | None) -> bool:
     return False
 
 
+def is_virtual_device(device: str | int | None) -> bool:
+    """True if ``device`` (name or index) looks like a virtual loopback."""
+    if device is None:
+        return False
+    if isinstance(device, str):
+        return is_virtual_name(device)
+    devices = _sd().query_devices()
+    if 0 <= device < len(devices):
+        return is_virtual_name(devices[device]["name"])
+    return False
+
+
 def default_output_device() -> int | None:
     """Index of the system default output device, or ``None`` if unknown."""
     try:

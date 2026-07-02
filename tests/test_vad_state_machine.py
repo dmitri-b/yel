@@ -1,6 +1,11 @@
 """Tests for the pure turn-end state machine (no audio hardware involved)."""
 
-from agent_say.vad import SpeechState, TurnEndDetector
+import sys
+from types import SimpleNamespace
+
+import numpy as np
+
+from agent_say.vad import SpeechState, TurnEndDetector, WebrtcVad
 
 
 def _drive(detector, samples, frame_ms=30, t0=0.0):
@@ -112,3 +117,18 @@ def test_uses_supplied_clock_not_wall_time():
     assert d.state is SpeechState.SPEAKING
     d.update(False, 0.5)
     assert d.update(False, 2.0) is SpeechState.ENDED  # 1.5s silence >= end_silence
+
+
+def test_webrtc_vad_uses_energy_fallback_for_loopback_audio(monkeypatch):
+    class RejectingVad:
+        def __init__(self, _aggressiveness):
+            pass
+
+        def is_speech(self, _pcm16, _sample_rate):
+            return False
+
+    monkeypatch.setitem(sys.modules, "webrtcvad", SimpleNamespace(Vad=RejectingVad))
+    vad = WebrtcVad(aggressiveness=2, sample_rate=16_000, rms_threshold=0.01)
+
+    assert vad.is_speech(np.full(480, 0.02, dtype=np.float32)) is True
+    assert vad.is_speech(np.full(480, 0.005, dtype=np.float32)) is False
