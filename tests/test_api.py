@@ -13,7 +13,7 @@ def test_speaker_resolves_device_once_and_plays_each_turn(monkeypatch):
         return 7  # pretend "BlackHole 2ch" -> device index 7
 
     monkeypatch.setattr(audio, "resolve_output_device", fake_resolve)
-    monkeypatch.setattr(tts, "synthesize", lambda text, sr: np.full(sr // 10, 0.1, dtype=np.float32))
+    monkeypatch.setattr(tts, "synthesize", lambda text, sr, **kwargs: np.full(sr // 10, 0.1, dtype=np.float32))
     monkeypatch.setattr(
         api.audio,
         "play",
@@ -30,10 +30,28 @@ def test_speaker_resolves_device_once_and_plays_each_turn(monkeypatch):
     assert all(p[0] == 16_000 and p[2] is None for p in played)
 
 
+def test_speaker_forwards_explicit_language_and_defaults_to_us_english(monkeypatch):
+    languages = []
+    monkeypatch.setattr(audio, "resolve_output_device", lambda _device: 0)
+    monkeypatch.setattr(
+        tts,
+        "synthesize",
+        lambda _text, _sr, **kwargs: languages.append(kwargs.get("language")) or np.zeros(160, dtype=np.float32),
+    )
+    monkeypatch.setattr(api.audio, "play", lambda *args, **kwargs: None)
+
+    speaker = Speaker("BlackHole 2ch")
+    speaker.speak("Hello")
+    speaker.speak("Hola", language="es")
+
+    assert languages == [None, "es"]
+    assert tts.DEFAULT_LANGUAGE == "en_US"
+
+
 def test_speak_oneshot_uses_mirror(monkeypatch):
     played = {}
     monkeypatch.setattr(audio, "resolve_output_device", lambda d: 0 if d == "BlackHole 2ch" else 1)
-    monkeypatch.setattr(tts, "synthesize", lambda text, sr: np.zeros(160, dtype=np.float32))
+    monkeypatch.setattr(tts, "synthesize", lambda text, sr, **kwargs: np.zeros(160, dtype=np.float32))
     monkeypatch.setattr(
         api.audio,
         "play",

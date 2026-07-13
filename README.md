@@ -44,6 +44,13 @@ say-ai "first prompt" && say-ai "second prompt"
 Speech detection uses `webrtcvad` gated by an RMS floor, with a small state
 machine (`agent_say.vad.TurnEndDetector`) deciding turn boundaries.
 
+Prompt synthesis never relies on the macOS system voice: the default is
+`Samantha` (`en_US`). Programmatic multilingual runs can call
+`Speaker.speak(text, language="es")` for `Mónica` (`es_ES`), `"fr"` for
+`Thomas` (`fr_FR`), or `"de"` for the male `Eddy (German (Germany))` voice
+(`de_DE`). Yel validates these mappings against `say -v '?'` before rendering,
+and rejects unsupported or mismatched locales.
+
 ## macOS setup (BlackHole loopback)
 
 Route `yel`'s speech into your agent's microphone input and listen for the
@@ -82,10 +89,12 @@ uv run yel \
 
 ## Transcribe the agent's reply (Deepgram)
 
-Pass `--transcribe` to transcribe what the agent said. `yel` records the
-captured reply, sends it to Deepgram's prerecorded API once the turn ends, and
-prints the transcript to **stdout** (status logs stay on stderr, so the
-transcript is cleanly capturable):
+Pass `--transcribe` to transcribe what the agent said. `yel` streams the
+captured reply to Deepgram over its WebSocket API while the turn is active and
+prints the final transcript to **stdout** (status logs stay on stderr, so the
+transcript is cleanly capturable). Every turn also reports `yel: TTFA: N ms` on
+stderr, measured from the end of prompt playback to the first detected agent
+speech frame (`n/a` when no speech is detected):
 
 ```sh
 reply=$(uv run yel --transcribe "what is a quick Greek recipe?")
@@ -135,6 +144,7 @@ Precedence (highest first): **CLI flags → environment variables → `.env` →
 | Deepgram key     | —                   | `DEEPGRAM_API_KEY`      | —       |
 | Start timeout    | `--start-timeout`   | `AGENT_SAY_START_TIMEOUT` | 30 s  |
 | End silence      | `--end-silence`     | `AGENT_SAY_END_SILENCE` | 1.2 s   |
+| Start-gap tolerance | —                | `AGENT_SAY_GAP_TOLERANCE` | 0.3 s |
 | Overall timeout  | `--overall-timeout` | `AGENT_SAY_OVERALL_TIMEOUT` | 180 s |
 | Bounded wait     | `--timeout`         | `AGENT_SAY_TIMEOUT`     | off     |
 | VAD aggressiveness | `--vad`           | `AGENT_SAY_VAD`         | 2       |

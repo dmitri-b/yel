@@ -27,18 +27,58 @@ def make(**kw):
     return TurnEndDetector(**base)
 
 
-def test_starts_after_min_speech():
+def test_starts_after_min_speech_and_preserves_onset_time():
     d = make(min_speech=0.3)
     # 0.3s of speech at 30ms frames = ~10 frames before it flips to SPEAKING.
-    state = _drive(d, [True] * 20)
+    state = _drive(d, [True] * 20, t0=12.5)
     assert state is SpeechState.SPEAKING
+    assert d.speech_started_at == 12.5
 
 
 def test_brief_blip_does_not_start():
     d = make(min_speech=0.3)
-    # A couple of speech frames then silence: below min_speech, stays WAITING.
-    state = _drive(d, [True, True] + [False] * 5)
+    # A couple of speech frames then lasting silence: below min_speech, the
+    # candidate run is dropped once the gap exceeds gap_tolerance.
+    state = _drive(d, [True, True] + [False] * 40)
     assert state is SpeechState.WAITING
+
+
+def test_bursty_reply_bridged_across_word_gaps():
+    # Vocoder replies over a digital loopback arrive as short bursts separated
+    # by exact-zero silence (observed live: 0.12-0.24s bursts, ~0.24s gaps).
+    # Dips within gap_tolerance must not reset the min_speech accumulation.
+    d = make(min_speech=0.3, gap_tolerance=0.3)
+    burst = lambda s: [True] * s  # noqa: E731
+    gap = lambda s: [False] * s  # noqa: E731
+    seq = burst(4) + gap(8) + burst(8) + gap(8) + burst(8)  # 0.12s / 0.24s / 0.24s
+    state = _drive(d, seq)
+    assert state is SpeechState.SPEAKING
+
+
+def test_single_short_burst_reply_is_detected():
+    # A one-word reply ("Hello!") is a single ~0.24s burst: shorter than
+    # min_speech but real. The span check keeps counting through the trailing
+    # in-tolerance silence, so it still starts.
+    d = make(min_speech=0.3, gap_tolerance=0.3, end_silence=1.0)
+    state = _drive(d, [True] * 8 + [False] * 50)
+    assert state is SpeechState.ENDED
+
+
+def test_click_blip_below_half_min_speech_never_starts():
+    # A stray click (single frame over the RMS floor) must not count as the
+    # agent starting: under half of min_speech of actual speech in the span.
+    d = make(min_speech=0.3, gap_tolerance=0.3, start_timeout=2.0)
+    state = _drive(d, ([True] + [False] * 30) * 4 + [False] * 60)
+    assert state is SpeechState.TIMEOUT_NO_SPEECH
+
+
+def test_gap_longer_than_tolerance_resets_run():
+    # Two sub-min_speech bursts separated by MORE than gap_tolerance: the
+    # first run is dropped, and the second alone stays below min_speech.
+    d = make(min_speech=0.3, gap_tolerance=0.15, start_timeout=3.0)
+    seq = [True] * 4 + [False] * 10 + [True] * 4 + [False] * 100
+    state = _drive(d, seq)
+    assert state is SpeechState.TIMEOUT_NO_SPEECH
 
 
 def test_full_turn_speak_then_silence_ends():

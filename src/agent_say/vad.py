@@ -42,8 +42,13 @@ class TurnEndDetector:
     Feed it ``update(is_speech, now)`` once per audio frame. It returns the
     current :class:`SpeechState`; once a terminal state is returned it sticks.
 
-    * The agent is considered to have *started* once it produces at least
-      ``min_speech`` seconds of (near-)contiguous speech.
+    * The agent is considered to have *started* once speech activity spans at
+      least ``min_speech`` seconds. Silence dips up to ``gap_tolerance`` do not
+      break the run — agent replies over digital loopbacks (BlackHole) arrive
+      as short vocoder bursts separated by exact-zero word gaps, so requiring
+      strictly contiguous speech would miss short replies entirely. To keep
+      stray clicks from counting as a start, at least half the qualifying span
+      must be actual speech frames.
     * Once speaking, the turn *ends* after ``end_silence`` seconds with no speech.
     * If no start happens within ``start_timeout`` seconds -> TIMEOUT_NO_SPEECH.
     * If the whole turn exceeds ``overall_timeout`` seconds -> TIMEOUT_OVERALL.
@@ -63,17 +68,23 @@ class TurnEndDetector:
         min_speech: float,
         overall_timeout: float,
         response_timeout: float | None = None,
+        gap_tolerance: float = 0.3,
     ) -> None:
         self.start_timeout = start_timeout
         self.end_silence = end_silence
         self.min_speech = min_speech
         self.overall_timeout = overall_timeout
         self.response_timeout = response_timeout
+        self.gap_tolerance = gap_tolerance
 
         self.state = SpeechState.WAITING
+        self.speech_started_at: float | None = None
         self._t0: float | None = None
         self._speech_run_start: float | None = None
         self._last_speech: float | None = None
+        self._speech_accum = 0.0
+        self._prev_now: float | None = None
+        self._prev_speech = False
 
     @property
     def finished(self) -> bool:
@@ -101,6 +112,8 @@ class TurnEndDetector:
             self._update_waiting(is_speech, now)
         elif self.state is SpeechState.SPEAKING:
             self._update_speaking(is_speech, now)
+        self._prev_now = now
+        self._prev_speech = is_speech
         return self.state
 
     def _update_waiting(self, is_speech: bool, now: float) -> None:
@@ -108,15 +121,24 @@ class TurnEndDetector:
         if is_speech:
             if self._speech_run_start is None:
                 self._speech_run_start = now
+                self._speech_accum = 0.0
+            elif self._prev_speech and self._prev_now is not None:
+                self._speech_accum += now - self._prev_now
             self._last_speech = now
-            if now - self._speech_run_start >= self.min_speech:
-                self.state = SpeechState.SPEAKING
-            return
+        elif self._speech_run_start is not None:
+            assert self._last_speech is not None
+            # A dip longer than gap_tolerance is a real gap: drop the candidate
+            # run. Shorter dips (word gaps, zero-filled chunk seams) are bridged.
+            if now - self._last_speech > self.gap_tolerance:
+                self._speech_run_start = None
 
-        # Silence while waiting: reset the candidate speech run, then check
-        # whether we've waited too long for the agent to start at all.
-        self._speech_run_start = None
-        if now - self._t0 >= self.start_timeout:
+        if self._speech_run_start is not None:
+            span = now - self._speech_run_start
+            if span >= self.min_speech and self._speech_accum >= self.min_speech / 2:
+                self.speech_started_at = self._speech_run_start
+                self.state = SpeechState.SPEAKING
+                return
+        if not is_speech and now - self._t0 >= self.start_timeout:
             self.state = SpeechState.TIMEOUT_NO_SPEECH
 
     def _update_speaking(self, is_speech: bool, now: float) -> None:

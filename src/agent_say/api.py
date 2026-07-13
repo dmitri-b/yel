@@ -47,10 +47,9 @@ class Speaker:
             else None
         )
 
-    def speak(self, text: str) -> np.ndarray:
-        """Render ``text`` to speech and play it into the output device (blocking
-        until playback finishes). Returns the mono float32 samples."""
-        samples = tts.synthesize(text, self.sample_rate)
+    def speak(self, text: str, *, language: str | None = None) -> np.ndarray:
+        """Render and play text with a locale-matched voice (US English by default)."""
+        samples = tts.synthesize(text, self.sample_rate, language=language)
         audio.play(
             samples,
             self.sample_rate,
@@ -66,9 +65,10 @@ def speak(
     out_device: str | int | None = DEFAULT_OUT_DEVICE,
     sample_rate: int = DEFAULT_SAMPLE_RATE,
     mirror_device: str | int | None = None,
+    language: str | None = None,
 ) -> np.ndarray:
     """One-shot convenience wrapper around :meth:`Speaker.speak`. Prefer a
     long-lived :class:`Speaker` when speaking multiple turns."""
     return Speaker(
         out_device, sample_rate=sample_rate, mirror_device=mirror_device
-    ).speak(text)
+    ).speak(text, language=language)

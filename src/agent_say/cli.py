@@ -16,6 +16,7 @@ import sys
 import typer
 from pydantic import ValidationError
 
+from . import ui
 from .audio import print_devices
 from .config import AgentSaySettings, find_dotenv
 from .errors import EXIT_INVALID_CONFIG
@@ -37,9 +38,11 @@ def parse_duration(text: str) -> float:
 
 app = typer.Typer(
     name="yel",
-    help="Script spoken turns against a local voice agent.",
+    help="Script spoken turns against a [bold]local voice agent[/bold].",
     no_args_is_help=True,
     add_completion=False,
+    rich_markup_mode="rich",
+    context_settings={"help_option_names": ["-h", "--help"]},
     epilog="Also: 'yel config show', 'yel config path', 'yel doctor'.",
 )
 
@@ -136,8 +139,15 @@ admin_app = typer.Typer(
     help="yel maintenance commands.",
     no_args_is_help=True,
     add_completion=False,
+    rich_markup_mode="rich",
+    context_settings={"help_option_names": ["-h", "--help"]},
 )
-config_app = typer.Typer(help="Inspect resolved configuration.", no_args_is_help=True)
+config_app = typer.Typer(
+    help="Inspect resolved configuration.",
+    no_args_is_help=True,
+    rich_markup_mode="rich",
+    context_settings={"help_option_names": ["-h", "--help"]},
+)
 admin_app.add_typer(config_app, name="config")
 
 
@@ -145,10 +155,12 @@ admin_app.add_typer(config_app, name="config")
 def config_show() -> None:
     """Print the resolved settings (env + .env + defaults)."""
     settings = _load_settings()
+    rows: list[tuple[str, object]] = []
     for key, value in settings.model_dump().items():
         if key == "deepgram_api_key" and value:
             value = "***" + str(value)[-4:]  # mask the secret
-        print(f"{key} = {value!r}")
+        rows.append((key, value))
+    ui.print_settings_table(rows)
 
 
 @config_app.command("path")
@@ -157,8 +169,7 @@ def config_path() -> None:
     from pathlib import Path
 
     env_path = Path(".env").resolve()
-    status = "found" if env_path.exists() else "not found"
-    print(f"{env_path}  ({status})")
+    ui.print_path_status(env_path, found=env_path.exists())
 
 
 @admin_app.command("doctor")
@@ -168,16 +179,23 @@ def doctor() -> None:
 
     ok = True
     if tts.is_available():
-        print("[ok] macOS 'say' TTS backend available")
+        try:
+            voice, locale = tts.voice_for_language()
+            ui.print_check(
+                "TTS backend", ok=True, detail=f"macOS 'say' available; {voice} ({locale}) installed"
+            )
+        except Exception as exc:
+            ok = False
+            ui.print_check("TTS backend", ok=False, detail=str(exc))
     else:
         ok = False
-        print("[!!] macOS 'say' TTS backend NOT available")
+        ui.print_check("TTS backend", ok=False, detail="macOS 'say' not available")
 
     try:
         print_devices()
     except Exception as exc:  # pragma: no cover - hardware dependent
         ok = False
-        print(f"[!!] could not query audio devices: {exc}")
+        ui.print_check("Audio devices", ok=False, detail=f"could not query devices: {exc}")
 
     raise typer.Exit(0 if ok else 1)
 
@@ -186,7 +204,7 @@ def _load_settings() -> AgentSaySettings:
     try:
         return AgentSaySettings(_env_file=find_dotenv())  # type: ignore[call-arg]
     except ValidationError as exc:
-        typer.echo(f"yel: invalid config: {exc}", err=True)
+        ui.error(f"yel: invalid config: {exc}")
         raise typer.Exit(EXIT_INVALID_CONFIG) from exc
 
 
@@ -195,7 +213,7 @@ def _build_settings(**overrides: object) -> AgentSaySettings:
     try:
         return settings.apply_overrides(**overrides)
     except ValidationError as exc:
-        typer.echo(f"yel: invalid config: {exc}", err=True)
+        ui.error(f"yel: invalid config: {exc}")
         raise typer.Exit(EXIT_INVALID_CONFIG) from exc
 
 

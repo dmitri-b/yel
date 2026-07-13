@@ -77,6 +77,10 @@ class AgentSaySettings(BaseSettings):
         description="Return successfully after at most this long (seconds).",
     )
 
+    # Silence dips up to this long (s) do not break the min_speech run while
+    # waiting for the agent to start; digital loopback replies are bursty.
+    gap_tolerance: float = Field(default=0.3, ge=0)
+
     vad: int = Field(default=2, ge=0, le=3)
     rms_threshold: float = Field(default=0.012, gt=0)
     sample_rate: int = 16_000

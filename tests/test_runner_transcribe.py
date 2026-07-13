@@ -18,7 +18,9 @@ def test_transcribes_and_prints_on_success(monkeypatch, capsys):
     _patch_audio(monkeypatch)
     clip = np.ones(480, dtype=np.float32)
     monkeypatch.setattr(
-        runner, "_listen_for_turn_end", lambda *a, **k: (SpeechState.ENDED, clip)
+        runner,
+        "_listen_for_turn_end",
+        lambda *a, **k: (SpeechState.ENDED, clip, 1.234),
     )
     seen = {}
 
@@ -43,7 +45,9 @@ def test_transcription_failure_is_nonfatal(monkeypatch, capsys):
     _patch_audio(monkeypatch)
     clip = np.ones(480, dtype=np.float32)
     monkeypatch.setattr(
-        runner, "_listen_for_turn_end", lambda *a, **k: (SpeechState.ENDED, clip)
+        runner,
+        "_listen_for_turn_end",
+        lambda *a, **k: (SpeechState.ENDED, clip, 0.75),
     )
 
     def boom(*a, **k):
@@ -62,7 +66,7 @@ def test_no_transcription_when_disabled(monkeypatch, capsys):
     monkeypatch.setattr(
         runner,
         "_listen_for_turn_end",
-        lambda *a, **k: (SpeechState.ENDED, None),
+        lambda *a, **k: (SpeechState.ENDED, None, 0.5),
     )
 
     def must_not_call(*a, **k):
@@ -79,7 +83,7 @@ def test_virtual_listen_device_uses_lower_rms_floor(monkeypatch):
 
     def fake_listen(_device, settings, *_args, **_kwargs):
         seen["rms_threshold"] = settings.rms_threshold
-        return SpeechState.ENDED, None
+        return SpeechState.ENDED, None, 0.4
 
     monkeypatch.setattr(runner, "_listen_for_turn_end", fake_listen)
 
@@ -94,7 +98,7 @@ def test_explicit_rms_floor_is_not_changed_for_virtual_listen_device(monkeypatch
 
     def fake_listen(_device, settings, *_args, **_kwargs):
         seen["rms_threshold"] = settings.rms_threshold
-        return SpeechState.ENDED, None
+        return SpeechState.ENDED, None, 0.4
 
     monkeypatch.setattr(runner, "_listen_for_turn_end", fake_listen)
 
@@ -105,3 +109,31 @@ def test_explicit_rms_floor_is_not_changed_for_virtual_listen_device(monkeypatch
     )
     assert runner.run_turn("hi", settings) == 0
     assert seen["rms_threshold"] == 0.004
+
+
+def test_reports_ttfa_for_each_successful_turn(monkeypatch):
+    _patch_audio(monkeypatch)
+    monkeypatch.setattr(
+        runner,
+        "_listen_for_turn_end",
+        lambda *a, **k: (SpeechState.ENDED, None, 1.234),
+    )
+    messages = []
+    monkeypatch.setattr(runner, "_log", lambda message, **_kwargs: messages.append(message))
+
+    assert runner.run_turn("hi", AgentSaySettings(_env_file=None)) == 0
+    assert "yel: TTFA: 1234 ms" in messages
+
+
+def test_reports_unavailable_ttfa_when_agent_never_speaks(monkeypatch):
+    _patch_audio(monkeypatch)
+    monkeypatch.setattr(
+        runner,
+        "_listen_for_turn_end",
+        lambda *a, **k: (SpeechState.TIMEOUT_NO_SPEECH, None, None),
+    )
+    messages = []
+    monkeypatch.setattr(runner, "_log", lambda message, **_kwargs: messages.append(message))
+
+    assert runner.run_turn("hi", AgentSaySettings(_env_file=None)) != 0
+    assert "yel: TTFA: n/a" in messages

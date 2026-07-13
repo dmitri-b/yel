@@ -21,7 +21,11 @@ def test_no_speaker_output_disables_virtual_prompt_mirror(monkeypatch):
     monkeypatch.setattr(
         runner,
         "_listen_for_turn_end",
-        lambda listen_device, settings, monitor, record=False: (runner.SpeechState.ENDED, None),
+        lambda listen_device, settings, monitor, record=False: (
+            runner.SpeechState.ENDED,
+            None,
+            0.25,
+        ),
     )
 
     settings = AgentSaySettings(

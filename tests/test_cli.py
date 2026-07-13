@@ -144,14 +144,45 @@ def test_missing_text_is_error(monkeypatch):
 
 def test_config_show(monkeypatch):
     monkeypatch.delenv("AGENT_SAY_VAD", raising=False)
+    monkeypatch.delenv("DEEPGRAM_API_KEY", raising=False)
     result = runner.invoke(cli.admin_app, ["config", "show"])
     assert result.exit_code == 0
-    assert "vad = 2" in result.stdout
+    assert "Resolved configuration" in result.stdout
+    assert "vad" in result.stdout
+    assert "2" in result.stdout
+
+
+def test_config_show_masks_secret(monkeypatch):
+    monkeypatch.setenv("DEEPGRAM_API_KEY", "dg-secret-1234")
+    result = runner.invoke(cli.admin_app, ["config", "show"])
+    assert result.exit_code == 0
+    assert "***1234" in result.stdout
+    assert "dg-secret-1234" not in result.stdout
 
 
 def test_doctor_runs(monkeypatch):
+    from agent_say import tts
+
     monkeypatch.setattr(cli, "print_devices", lambda: print("devices"))
+    monkeypatch.setattr(tts, "is_available", lambda: True)
+    monkeypatch.setattr(tts, "voice_for_language", lambda: ("Samantha", "en_US"))
     result = runner.invoke(cli.admin_app, ["doctor"])
-    # On this macOS host the 'say' backend is present -> exit 0.
     assert result.exit_code == 0
     assert "TTS backend" in result.stdout
+    assert "Samantha" in result.stdout
+
+
+def test_doctor_fails_when_default_voice_is_missing(monkeypatch):
+    from agent_say import tts
+    from agent_say.errors import TTSError
+
+    monkeypatch.setattr(cli, "print_devices", lambda: print("devices"))
+    monkeypatch.setattr(tts, "is_available", lambda: True)
+    monkeypatch.setattr(
+        tts,
+        "voice_for_language",
+        lambda: (_ for _ in ()).throw(TTSError("Samantha is not installed")),
+    )
+    result = runner.invoke(cli.admin_app, ["doctor"])
+    assert result.exit_code == 1
+    assert "Samantha is not installed" in result.stdout

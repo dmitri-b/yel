@@ -11,21 +11,26 @@ Flow per invocation:
     7. Return an exit code (see :mod:`agent_say.errors`).
 
 Playback is sequential with listening: we send the prompt, then start
-capturing. The intended setup routes our speech to the agent's input (e.g.
-BlackHole) and the agent's voice to a separate monitor/mic. When the prompt is
-routed to a virtual loopback the operator can't hear, we also mirror it onto a
-real output (the --speakers monitor, or the system default) so it stays audible.
+capturing. Holding a capture stream open on the listen device while playing
+would be faster, but on a shared virtual loopback (BlackHole out AND listen)
+CoreAudio intermittently fails one of the streams with kAudioUnitErr_
+CannotDoInCurrentContext, silently killing the capture — so we keep the
+streams strictly sequential and rely on the turn detector's gap tolerance to
+catch replies whose onset lands in the short gap. The intended setup routes
+our speech to the agent's input (e.g. BlackHole) and the agent's voice to a
+separate monitor/mic. When the prompt is routed to a virtual loopback the
+operator can't hear, we also mirror it onto a real output (the --speakers
+monitor, or the system default) so it stays audible.
 """
 
 from __future__ import annotations
 
 import queue
-import sys
 import time
 
 import numpy as np
 
-from . import audio, tts
+from . import audio, tts, ui
 from .config import AgentSaySettings
 from .errors import (
     EXIT_NO_SPEECH,
@@ -46,8 +51,8 @@ DEFAULT_RMS_THRESHOLD = AgentSaySettings.model_fields["rms_threshold"].default
 VIRTUAL_LISTEN_RMS_THRESHOLD = 0.001
 
 
-def _log(msg: str) -> None:
-    print(msg, file=sys.stderr, flush=True)
+def _log(msg: str, *, style: str = "cyan") -> None:
+    ui.status(msg, style=style)
 
 
 def run_turn(text: str, settings: AgentSaySettings) -> int:
@@ -56,7 +61,7 @@ def run_turn(text: str, settings: AgentSaySettings) -> int:
     try:
         return _run_turn(text, settings)
     except AgentSayError as exc:
-        _log(f"yel: {exc}")
+        _log(f"yel: {exc}", style="bold red")
         return exc.exit_code
 
 
@@ -78,7 +83,10 @@ def _run_turn(text: str, settings: AgentSaySettings) -> int:
             settings.sample_rate, monitor_device, settings.frame_samples
         )
     elif settings.monitor_device is not None:
-        _log("yel: --no-speaker-output set; not monitoring agent audio on speakers.")
+        _log(
+            "yel: --no-speaker-output set; not monitoring agent audio on speakers.",
+            style="yellow",
+        )
 
     # When the prompt is routed to a silent virtual loopback (e.g. BlackHole),
     # the operator can't hear it. Mirror the prompt onto a real output so it's
@@ -90,9 +98,7 @@ def _run_turn(text: str, settings: AgentSaySettings) -> int:
             if monitor_device is not None
             else audio.default_output_device()
         )
-        if prompt_mirror_device is not None and prompt_mirror_device != out_device:
-            _log("yel: out is a virtual device; mirroring prompt to real speakers.")
-        else:
+        if prompt_mirror_device is None or prompt_mirror_device == out_device:
             prompt_mirror_device = None
 
     _log(f'yel: speaking: "{text}"')
@@ -101,27 +107,27 @@ def _run_turn(text: str, settings: AgentSaySettings) -> int:
         samples, settings.sample_rate, out_device, mirror_device=prompt_mirror_device
     )
 
-    if monitor is not None:
-        _log("yel: listening for the agent's reply (monitoring on speakers)...")
-    else:
-        _log("yel: listening for the agent's reply...")
-    state, clip = _listen_for_turn_end(
+    state, clip, ttfa_s = _listen_for_turn_end(
         listen_device, listen_settings, monitor, record=listen_settings.transcribe
     )
+    if ttfa_s is None:
+        _log("yel: TTFA: n/a", style="yellow")
+    else:
+        _log(f"yel: TTFA: {ttfa_s * 1000:.0f} ms", style="bold green")
 
-    if state is SpeechState.ENDED:
-        _log("yel: agent finished.")
-    elif state is SpeechState.TIMED_OUT_OK:
+    if state is SpeechState.TIMED_OUT_OK:
         _log(
             f"yel: returning after --timeout of {settings.response_timeout:g}s "
-            "(agent may still be talking)."
+            "(agent may still be talking).",
+            style="yellow",
         )
     elif state is SpeechState.TIMEOUT_NO_SPEECH:
         _log(
-            f"yel: no agent speech within {settings.start_timeout:.0f}s start timeout."
+            f"yel: no agent speech within {settings.start_timeout:.0f}s start timeout.",
+            style="bold red",
         )
     elif state is SpeechState.TIMEOUT_OVERALL:
-        _log(f"yel: overall timeout of {settings.overall_timeout:.0f}s reached.")
+        _log(f"yel: overall timeout of {settings.overall_timeout:.0f}s reached.", style="bold red")
 
     if settings.transcribe and clip is not None and clip.size:
         _transcribe_and_print(clip, settings)
@@ -142,7 +148,6 @@ def _transcribe_and_print(clip: np.ndarray, settings: AgentSaySettings) -> None:
     failure is logged but does not change the turn's exit code."""
     from . import transcribe as dg
 
-    _log("yel: transcribing agent reply with Deepgram...")
     try:
         text = dg.transcribe(
             clip,
@@ -151,13 +156,13 @@ def _transcribe_and_print(clip: np.ndarray, settings: AgentSaySettings) -> None:
             model=settings.deepgram_model,
         )
     except dg.TranscriptionError as exc:
-        _log(f"yel: transcription failed: {exc}")
+        _log(f"yel: transcription failed: {exc}", style="bold red")
         return
     if text:
         # Plain transcript on stdout so it can be captured (status logs are on stderr).
         print(text, flush=True)
     else:
-        _log("yel: transcription returned no text.")
+        _log("yel: transcription returned no text.", style="yellow")
 
 
 def _listen_for_turn_end(
@@ -165,7 +170,7 @@ def _listen_for_turn_end(
     settings: AgentSaySettings,
     monitor: "audio.SpeakerMonitor | None" = None,
     record: bool = False,
-) -> tuple[SpeechState, np.ndarray | None]:
+) -> tuple[SpeechState, np.ndarray | None, float | None]:
     import contextlib
 
     import sounddevice as sd
@@ -176,6 +181,7 @@ def _listen_for_turn_end(
         min_speech=settings.min_speech,
         overall_timeout=settings.overall_timeout,
         response_timeout=settings.response_timeout,
+        gap_tolerance=settings.gap_tolerance,
     )
     vad = WebrtcVad(
         aggressiveness=settings.vad,
@@ -188,15 +194,15 @@ def _listen_for_turn_end(
 
     def callback(indata, _frames, _time, status):  # noqa: ANN001
         if status:
-            _log(f"yel: audio status: {status}")
+            _log(f"yel: audio status: {status}", style="yellow")
         block = indata[:, 0].copy()
         if monitor is not None:
             monitor.feed(block)  # passthrough: make the agent audible on speakers
         frames.put(block)
 
-    announced_speaking = False
     buffer = np.empty(0, dtype=np.float32)
     recorded: list[np.ndarray] = []
+    wait_started_at = time.monotonic()
     with contextlib.ExitStack() as stack:
         if monitor is not None:
             stack.enter_context(monitor)
@@ -224,10 +230,12 @@ def _listen_for_turn_end(
             while buffer.size >= frame_samples and not detector.finished:
                 frame, buffer = buffer[:frame_samples], buffer[frame_samples:]
                 is_speech = vad.is_speech(frame)
-                state = detector.update(is_speech, time.monotonic())
-                if state is SpeechState.SPEAKING and not announced_speaking:
-                    announced_speaking = True
-                    _log("yel: agent started speaking...")
+                detector.update(is_speech, time.monotonic())
 
     audio_clip = np.concatenate(recorded) if recorded else None
-    return detector.state, audio_clip
+    ttfa_s = (
+        detector.speech_started_at - wait_started_at
+        if detector.speech_started_at is not None
+        else None
+    )
+    return detector.state, audio_clip, ttfa_s

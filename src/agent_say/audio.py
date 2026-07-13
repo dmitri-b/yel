@@ -12,6 +12,7 @@ from typing import Any
 import numpy as np
 
 from .errors import DeviceNotFoundError
+from .ui import print_devices_table
 
 
 def _sd():
@@ -34,18 +35,7 @@ def print_devices() -> None:
     except Exception:
         default_in = default_out = None
 
-    print("Audio devices (index: name  [in/out channels])")
-    print("-" * 60)
-    for idx, dev in enumerate(devices):
-        ins = dev["max_input_channels"]
-        outs = dev["max_output_channels"]
-        marks = []
-        if idx == default_in and ins:
-            marks.append("default-in")
-        if idx == default_out and outs:
-            marks.append("default-out")
-        mark = f"  <{', '.join(marks)}>" if marks else ""
-        print(f"  {idx:>2}: {dev['name']}  [{ins} in / {outs} out]{mark}")
+    print_devices_table(devices, default_in=default_in, default_out=default_out)
 
 
 def _resolve(device: str | int | None, *, want_output: bool) -> int | None:
