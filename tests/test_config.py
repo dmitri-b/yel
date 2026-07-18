@@ -15,7 +15,6 @@ def test_defaults_are_blackhole_only():
     assert s.sample_rate == 16_000
     assert s.frame_samples == 480
     assert s.transcribe is True
-    assert s.transcription_locale == "en-US"
 
 
 def test_other_blackhole_variants_are_allowed():

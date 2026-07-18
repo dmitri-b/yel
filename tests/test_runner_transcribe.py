@@ -19,7 +19,7 @@ def test_transcribes_and_prints_on_success(monkeypatch, capsys):
     clip = np.ones(480, dtype=np.float32)
     seen = {}
 
-    def fake_transcribe(samples, sr, *, locale, timeout=60.0):
+    def fake_transcribe(samples, sr, *, locale=transcribe.DEFAULT_LOCALE, timeout=60.0):
         seen["samples"] = samples
         seen["sample_rate"] = sr
         seen["locale"] = locale
@@ -32,13 +32,13 @@ def test_transcribes_and_prints_on_success(monkeypatch, capsys):
     )
     monkeypatch.setattr(transcribe, "transcribe", fake_transcribe)
 
-    settings = Settings(transcribe=True, transcription_locale="en-GB")
+    settings = Settings(transcribe=True)
     code = runner.run_turn("recipe?", settings)
     out = capsys.readouterr().out
     assert code == 0
     assert "a quick greek salad" in out  # transcript on stdout
     assert seen["sample_rate"] == 16_000
-    assert seen["locale"] == "en-GB"
+    assert seen["locale"] == transcribe.DEFAULT_LOCALE
     assert seen["samples"] is clip
 
 

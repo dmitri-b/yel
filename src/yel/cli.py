@@ -100,11 +100,6 @@ def speak(
         "--transcribe/--no-transcribe",
         help="Transcribe the reply locally with Apple Speech (enabled by default).",
     ),
-    transcription_locale: str | None = typer.Option(
-        None,
-        "--transcription-locale",
-        help="BCP-47 locale for on-device transcription (default: en-US).",
-    ),
 ) -> None:
     """Speak TEXT to a local voice agent and wait until it stops replying."""
     if devices:
@@ -133,7 +128,6 @@ def speak(
         vad=vad,
         rms_threshold=rms_threshold,
         transcribe=transcribe,
-        transcription_locale=transcription_locale,
     )
     raise typer.Exit(run_turn(text=spoken_text, settings=settings))
 

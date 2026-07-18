@@ -52,10 +52,6 @@ class Settings(BaseModel):
 
     # Fully local Apple Speech transcription. ``--no-transcribe`` opts out.
     transcribe: bool = Field(default=True, description="Transcribe the agent's reply.")
-    transcription_locale: str = Field(
-        default="en-US",
-        description="BCP-47 locale for Apple's on-device SpeechTranscriber.",
-    )
 
     @field_validator("output_device", "listen_device", mode="before")
     @classmethod

@@ -140,7 +140,6 @@ def _transcribe_clip(clip: np.ndarray, settings: Settings) -> None:
         text = native_asr.transcribe(
             clip,
             settings.sample_rate,
-            locale=settings.transcription_locale,
         )
     except native_asr.TranscriptionError as exc:
         _log(f"yel: transcription failed: {exc}", style="bold red")

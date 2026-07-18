@@ -32,6 +32,7 @@ def test_help():
     )
     assert "--vad" not in result.stdout
     assert "--rms-threshold" not in result.stdout
+    assert "--transcription-locale" not in result.stdout
     assert "doctor" not in result.stdout
     assert "config" not in result.stdout
 
@@ -133,11 +134,15 @@ def test_transcribe_flag_reaches_settings(monkeypatch):
     monkeypatch.setattr(cli, "run_turn", _capture_settings(captured))
     result = runner.invoke(
         cli.app,
-        ["hi", "--transcribe", "--transcription-locale", "en-GB"],
+        ["hi", "--transcribe"],
     )
     assert result.exit_code == 0
     assert captured["s"].transcribe is True
-    assert captured["s"].transcription_locale == "en-GB"
+
+
+def test_transcription_locale_flag_is_not_supported():
+    result = runner.invoke(cli.app, ["hi", "--transcription-locale", "en-GB"])
+    assert result.exit_code != 0
 
 
 def test_transcription_is_enabled_by_default(monkeypatch):
