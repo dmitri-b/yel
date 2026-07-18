@@ -2,7 +2,7 @@
 
 Drive a voice agent from your terminal, codex, Claude Code etc.
 
-Use `yel` with GPT Live, Grok Voice, or any voice agent that can use your Mac's
+Use `yel` with GPT Live, Grok Voice, or any voice system that can use your Mac's
 microphone input.
 
 - Speak (yell) a prompt and wait for the reply.
