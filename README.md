@@ -1,6 +1,6 @@
 # yel
 
-Drive a voice agent from your terminal.
+Drive a voice agent from your terminal, codex, Claude Code etc.
 
 Use `yel` with GPT Live, Grok Voice, or any voice agent that can use your Mac's
 microphone input.
