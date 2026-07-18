@@ -1,8 +1,8 @@
 import pytest
 from typer.testing import CliRunner
 
-from agent_say import cli
-from agent_say.cli import parse_duration
+from yel import cli
+from yel.cli import parse_duration
 
 runner = CliRunner()
 
@@ -25,6 +25,15 @@ def test_help():
     result = runner.invoke(cli.app, ["--help"])
     assert result.exit_code == 0
     assert "voice agent" in result.stdout
+    assert "╭" not in result.stdout
+    assert any(
+        "--devices" in line and "List audio devices and exit." in line
+        for line in result.stdout.splitlines()
+    )
+    assert "--vad" not in result.stdout
+    assert "--rms-threshold" not in result.stdout
+    assert "doctor" not in result.stdout
+    assert "config" not in result.stdout
 
 
 def test_devices_lists_and_exits(monkeypatch):
@@ -69,6 +78,8 @@ def test_cli_overrides_reach_settings(monkeypatch):
             "hi",
             "--vad",
             "3",
+            "--rms-threshold",
+            "0.002",
             "--end-silence",
             "0.5",
             "--out",
@@ -81,10 +92,32 @@ def test_cli_overrides_reach_settings(monkeypatch):
     assert result.exit_code == 0
     s = captured["settings"]
     assert s.vad == 3
+    assert s.rms_threshold == 0.002
     assert s.end_silence == 0.5
     assert s.output_device == "BlackHole 2ch"
+    assert s.listen_device == "BlackHole 2ch"
     assert s.monitor_device == "MacBook Pro Speakers"
     assert s.speaker_output is False
+
+
+@pytest.mark.parametrize(
+    "args",
+    [
+        ["hi", "--out", "MacBook Pro Speakers"],
+        ["hi", "--listen", "MacBook Pro Microphone"],
+    ],
+)
+def test_cli_rejects_physical_audio_routes(monkeypatch, args):
+    monkeypatch.setattr(
+        cli,
+        "run_turn",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("run_turn must not receive a physical route")
+        ),
+    )
+    result = runner.invoke(cli.app, args)
+    assert result.exit_code == 5
+    assert "BlackHole" in result.stderr
 
 
 def _capture_settings(captured):
@@ -98,14 +131,24 @@ def _capture_settings(captured):
 def test_transcribe_flag_reaches_settings(monkeypatch):
     captured = {}
     monkeypatch.setattr(cli, "run_turn", _capture_settings(captured))
-    result = runner.invoke(cli.app, ["hi", "--transcribe", "--deepgram-model", "nova-2"])
+    result = runner.invoke(
+        cli.app,
+        ["hi", "--transcribe", "--transcription-locale", "en-GB"],
+    )
     assert result.exit_code == 0
     assert captured["s"].transcribe is True
-    assert captured["s"].deepgram_model == "nova-2"
+    assert captured["s"].transcription_locale == "en-GB"
+
+
+def test_transcription_is_enabled_by_default(monkeypatch):
+    captured = {}
+    monkeypatch.setattr(cli, "run_turn", _capture_settings(captured))
+    result = runner.invoke(cli.app, ["hi"])
+    assert result.exit_code == 0
+    assert captured["s"].transcribe is True
 
 
 def test_no_transcribe_flag_overrides(monkeypatch):
-    monkeypatch.setenv("AGENT_SAY_TRANSCRIBE", "true")
     captured = {}
     monkeypatch.setattr(cli, "run_turn", _capture_settings(captured))
     result = runner.invoke(cli.app, ["hi", "--no-transcribe"])
@@ -142,47 +185,8 @@ def test_missing_text_is_error(monkeypatch):
     assert result.exit_code != 0
 
 
-def test_config_show(monkeypatch):
-    monkeypatch.delenv("AGENT_SAY_VAD", raising=False)
-    monkeypatch.delenv("DEEPGRAM_API_KEY", raising=False)
-    result = runner.invoke(cli.admin_app, ["config", "show"])
-    assert result.exit_code == 0
-    assert "Resolved configuration" in result.stdout
-    assert "vad" in result.stdout
-    assert "2" in result.stdout
-
-
-def test_config_show_masks_secret(monkeypatch):
-    monkeypatch.setenv("DEEPGRAM_API_KEY", "dg-secret-1234")
-    result = runner.invoke(cli.admin_app, ["config", "show"])
-    assert result.exit_code == 0
-    assert "***1234" in result.stdout
-    assert "dg-secret-1234" not in result.stdout
-
-
-def test_doctor_runs(monkeypatch):
-    from agent_say import tts
-
-    monkeypatch.setattr(cli, "print_devices", lambda: print("devices"))
-    monkeypatch.setattr(tts, "is_available", lambda: True)
-    monkeypatch.setattr(tts, "voice_for_language", lambda: ("Samantha", "en_US"))
-    result = runner.invoke(cli.admin_app, ["doctor"])
-    assert result.exit_code == 0
-    assert "TTS backend" in result.stdout
-    assert "Samantha" in result.stdout
-
-
-def test_doctor_fails_when_default_voice_is_missing(monkeypatch):
-    from agent_say import tts
-    from agent_say.errors import TTSError
-
-    monkeypatch.setattr(cli, "print_devices", lambda: print("devices"))
-    monkeypatch.setattr(tts, "is_available", lambda: True)
-    monkeypatch.setattr(
-        tts,
-        "voice_for_language",
-        lambda: (_ for _ in ()).throw(TTSError("Samantha is not installed")),
-    )
-    result = runner.invoke(cli.admin_app, ["doctor"])
-    assert result.exit_code == 1
-    assert "Samantha is not installed" in result.stdout
+def test_removed_overall_timeout_is_rejected(monkeypatch):
+    monkeypatch.setattr(cli, "run_turn", lambda text, settings: 0)
+    result = runner.invoke(cli.app, ["hi", "--overall-timeout", "90"])
+    assert result.exit_code != 0
+    assert "No such option" in result.stderr

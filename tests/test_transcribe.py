@@ -1,12 +1,12 @@
-"""Tests for the Deepgram streaming transcription module (websocket mocked)."""
+"""Tests for the fully local macOS SpeechAnalyzer adapter."""
 
-import json
-import sys
+import subprocess
+from pathlib import Path
 
 import numpy as np
 import pytest
 
-from agent_say import transcribe as dg
+from yel import transcribe as native_asr
 
 
 def _tone(seconds=0.2, sr=16000):
@@ -15,117 +15,101 @@ def _tone(seconds=0.2, sr=16000):
     )
 
 
-def _fake_websockets(connect):
-    return type("W", (), {"connect": staticmethod(connect)})
-
-
 def test_pcm16_bytes_roundtrip():
     samples = _tone()
-    pcm = dg._pcm16_bytes(samples, 16000)
-    assert len(pcm) == len(samples) * 2  # 16-bit mono
+    pcm = native_asr._pcm16_bytes(samples, 16000)
+    assert len(pcm) == len(samples) * 2
     back = np.frombuffer(pcm, dtype="<i2")
     assert back.shape[0] == samples.shape[0]
 
 
-def test_stream_url_has_streaming_params():
-    url = dg._stream_url("nova-3", 16000, "en")
-    assert url.startswith("wss://api.deepgram.com/v1/listen?")
-    assert "model=nova-3" in url
-    assert "encoding=linear16" in url
-    assert "sample_rate=16000" in url
-    assert "interim_results=false" in url
+def test_empty_audio_returns_without_building_helper(monkeypatch):
+    monkeypatch.setattr(
+        native_asr,
+        "_helper_executable",
+        lambda: (_ for _ in ()).throw(AssertionError("helper should not be built")),
+    )
+    assert native_asr.transcribe(np.zeros(0, dtype=np.float32), 16000) == ""
 
 
-def test_final_from_message_extracts_only_finals():
-    final = {
-        "type": "Results",
-        "is_final": True,
-        "channel": {"alternatives": [{"transcript": "hello world  "}]},
-    }
-    assert dg._final_from_message(final) == "hello world"
-
-    interim = dict(final, is_final=False)
-    assert dg._final_from_message(interim) is None
-
-    empty = {"type": "Results", "is_final": True, "channel": {"alternatives": [{"transcript": "  "}]}}
-    assert dg._final_from_message(empty) is None
-
-    assert dg._final_from_message({"type": "Metadata"}) is None
-
-
-def test_missing_key_raises():
-    with pytest.raises(dg.TranscriptionError):
-        dg.transcribe(_tone(), 16000, api_key="")
-
-
-def test_empty_audio_returns_empty():
-    assert dg.transcribe(np.zeros(0, dtype=np.float32), 16000, api_key="k") == ""
-
-
-class _FakeWS:
-    """Minimal async websocket: collects sends, replays scripted server messages."""
-
-    def __init__(self, server_messages):
-        self._server = list(server_messages)
-        self.sent = []
-        self.closed = False
-
-    async def send(self, data):
-        self.sent.append(data)
-
-    def __aiter__(self):
-        self._iter = iter(self._server)
-        return self
-
-    async def __anext__(self):
-        try:
-            return next(self._iter)
-        except StopIteration:
-            raise StopAsyncIteration
-
-    async def close(self):
-        self.closed = True
-
-
-def test_transcribe_streams_audio_and_joins_finals(monkeypatch):
+def test_transcribe_passes_pcm_and_locale_to_native_helper(monkeypatch):
     captured = {}
-    server_messages = [
-        json.dumps({"type": "Results", "is_final": False,
-                    "channel": {"alternatives": [{"transcript": "hi"}]}}),
-        json.dumps({"type": "Results", "is_final": True,
-                    "channel": {"alternatives": [{"transcript": "hi there,"}]}}),
-        json.dumps({"type": "Results", "is_final": True,
-                    "channel": {"alternatives": [{"transcript": "how are you?"}]}}),
+    monkeypatch.setattr(native_asr, "_helper_executable", lambda: Path("/tmp/yel-native-asr"))
+
+    def fake_run(command, **kwargs):
+        captured["command"] = command
+        captured["input"] = kwargs["input"]
+        return subprocess.CompletedProcess(command, 0, stdout=b"hello locally\n", stderr=b"")
+
+    monkeypatch.setattr(native_asr.subprocess, "run", fake_run)
+    samples = _tone()
+    result = native_asr.transcribe(samples, 16_000, locale="en_US")
+
+    assert result == "hello locally"
+    assert captured["command"] == [
+        "/tmp/yel-native-asr",
+        "--sample-rate",
+        "16000",
+        "--locale",
+        "en-US",
     ]
-    fake = _FakeWS(server_messages)
-
-    async def fake_connect(url, **kwargs):
-        captured["url"] = url
-        headers = kwargs.get("additional_headers") or kwargs.get("extra_headers") or {}
-        captured["auth"] = headers.get("Authorization")
-        return fake
-
-    monkeypatch.setitem(sys.modules, "websockets", _fake_websockets(fake_connect))
-
-    text = dg.transcribe(_tone(0.3), 16000, api_key="secret", model="nova-3")
-
-    assert text == "hi there, how are you?"
-    assert captured["url"].startswith("wss://api.deepgram.com/v1/listen?")
-    assert "model=nova-3" in captured["url"]
-    assert captured["auth"] == "Token secret"
-    audio_frames = [s for s in fake.sent if isinstance(s, (bytes, bytearray))]
-    control = [json.loads(s) for s in fake.sent if isinstance(s, str)]
-    assert len(audio_frames) >= 1
-    assert {"type": "Finalize"} in control
-    assert {"type": "CloseStream"} in control
-    assert fake.closed
+    assert captured["input"] == native_asr._pcm16_bytes(samples)
 
 
-def test_connect_failure_becomes_transcription_error(monkeypatch):
-    async def boom(url, **kwargs):
-        raise OSError("connection refused")
+def test_native_failure_becomes_transcription_error(monkeypatch):
+    monkeypatch.setattr(native_asr, "_helper_executable", lambda: Path("/tmp/yel-native-asr"))
+    monkeypatch.setattr(
+        native_asr.subprocess,
+        "run",
+        lambda *args, **kwargs: subprocess.CompletedProcess(
+            args[0], 1, stdout=b"", stderr=b"native model unavailable\n"
+        ),
+    )
+    with pytest.raises(native_asr.TranscriptionError, match="native model unavailable"):
+        native_asr.transcribe(_tone(), 16_000)
 
-    monkeypatch.setitem(sys.modules, "websockets", _fake_websockets(boom))
-    with pytest.raises(dg.TranscriptionError) as exc:
-        dg.transcribe(_tone(), 16000, api_key="x")
-    assert "streaming failed" in str(exc.value).lower()
+
+def test_timeout_becomes_transcription_error(monkeypatch):
+    monkeypatch.setattr(native_asr, "_helper_executable", lambda: Path("/tmp/yel-native-asr"))
+
+    def time_out(command, **kwargs):
+        raise subprocess.TimeoutExpired(command, kwargs["timeout"])
+
+    monkeypatch.setattr(native_asr.subprocess, "run", time_out)
+    with pytest.raises(native_asr.TranscriptionError, match="timed out"):
+        native_asr.transcribe(_tone(), 16_000, timeout=2)
+
+
+def test_helper_is_compiled_once_and_cached(monkeypatch, tmp_path):
+    source = tmp_path / "speech_transcriber.swift"
+    source.write_text("// native helper", encoding="utf-8")
+    monkeypatch.setattr(native_asr, "_HELPER_SOURCE", source)
+    monkeypatch.setattr(native_asr.sys, "platform", "darwin")
+    monkeypatch.setattr(native_asr, "_macos_major", lambda: 26)
+    monkeypatch.setattr(
+        native_asr,
+        "_compile_command",
+        lambda _source, output, _cache: ["swiftc", "-o", str(output)],
+    )
+    builds = []
+
+    def fake_compile(command, **kwargs):
+        builds.append(command)
+        Path(command[-1]).write_bytes(b"Mach-O placeholder")
+        return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+
+    monkeypatch.setattr(native_asr.subprocess, "run", fake_compile)
+
+    first = native_asr._helper_executable(cache_root=tmp_path / "cache")
+    second = native_asr._helper_executable(cache_root=tmp_path / "cache")
+
+    assert first == second
+    assert first.is_file()
+    assert len(builds) == 1
+
+
+def test_old_macos_is_rejected(monkeypatch, tmp_path):
+    monkeypatch.setattr(native_asr.sys, "platform", "darwin")
+    monkeypatch.setattr(native_asr, "_macos_major", lambda: 15)
+    with pytest.raises(native_asr.TranscriptionError, match="macOS 26"):
+        native_asr._helper_executable(cache_root=tmp_path)

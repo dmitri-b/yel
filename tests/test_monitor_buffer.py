@@ -2,7 +2,7 @@
 
 import numpy as np
 
-from agent_say.audio import _MonitorBuffer
+from yel.audio import _MonitorBuffer
 
 
 def test_fifo_order_across_reads():

@@ -7,7 +7,9 @@ audio hardware:
   updates. It decides when the agent started talking and when it has gone quiet
   long enough to count the turn as finished.
 * ``WebrtcVad`` — a thin wrapper over ``webrtcvad`` that classifies a single PCM
-  frame, gated by an RMS floor to ignore low-level background noise.
+  frame, gated by an RMS floor to ignore low-level background noise. Explicit
+  virtual loopbacks can opt into an energy fallback for synthetic speech that
+  WebRTC rejects.
 """
 
 from __future__ import annotations
@@ -24,14 +26,12 @@ class SpeechState(str, Enum):
     SPEAKING = "speaking"  # agent is actively speaking
     ENDED = "ended"  # agent finished (trailing silence reached)
     TIMEOUT_NO_SPEECH = "timeout_no_speech"  # never started before start_timeout
-    TIMEOUT_OVERALL = "timeout_overall"  # overall_timeout elapsed
     TIMED_OUT_OK = "timed_out_ok"  # response_timeout cap reached (success, exit 0)
 
 
 _TERMINAL = {
     SpeechState.ENDED,
     SpeechState.TIMEOUT_NO_SPEECH,
-    SpeechState.TIMEOUT_OVERALL,
     SpeechState.TIMED_OUT_OK,
 }
 
@@ -51,7 +51,6 @@ class TurnEndDetector:
       must be actual speech frames.
     * Once speaking, the turn *ends* after ``end_silence`` seconds with no speech.
     * If no start happens within ``start_timeout`` seconds -> TIMEOUT_NO_SPEECH.
-    * If the whole turn exceeds ``overall_timeout`` seconds -> TIMEOUT_OVERALL.
     * If ``response_timeout`` is set and elapses first, -> TIMED_OUT_OK: a
       deliberate *success* cap (exit 0) so the caller can return early and chain
       a timed follow-up, even if the agent is still talking.
@@ -66,14 +65,12 @@ class TurnEndDetector:
         start_timeout: float,
         end_silence: float,
         min_speech: float,
-        overall_timeout: float,
         response_timeout: float | None = None,
         gap_tolerance: float = 0.3,
     ) -> None:
         self.start_timeout = start_timeout
         self.end_silence = end_silence
         self.min_speech = min_speech
-        self.overall_timeout = overall_timeout
         self.response_timeout = response_timeout
         self.gap_tolerance = gap_tolerance
 
@@ -101,11 +98,6 @@ class TurnEndDetector:
         # waiting/speaking branch so it pre-empts the no-speech start_timeout.
         if self.response_timeout is not None and now - self._t0 >= self.response_timeout:
             self.state = SpeechState.TIMED_OUT_OK
-            return self.state
-
-        # Overall watchdog applies in every non-terminal state.
-        if now - self._t0 >= self.overall_timeout:
-            self.state = SpeechState.TIMEOUT_OVERALL
             return self.state
 
         if self.state is SpeechState.WAITING:
@@ -155,17 +147,24 @@ class WebrtcVad:
 
     WebRTC VAD is tuned for human microphone speech. Local voice agents can
     produce vocoder audio that is clearly audible and transcribable but rejected
-    by WebRTC, especially through virtual loopback devices. Once the RMS floor is
-    crossed, treat sustained monitor energy as speech so scripted turns do not
-    wait until the start timeout despite having captured a real reply.
+    by WebRTC through BlackHole. ``energy_fallback`` treats audio above the floor
+    as speech on that enforced loopback path.
     """
 
-    def __init__(self, *, aggressiveness: int, sample_rate: int, rms_threshold: float) -> None:
+    def __init__(
+        self,
+        *,
+        aggressiveness: int,
+        sample_rate: int,
+        rms_threshold: float,
+        energy_fallback: bool = False,
+    ) -> None:
         import webrtcvad
 
         self._vad = webrtcvad.Vad(aggressiveness)
         self.sample_rate = sample_rate
         self.rms_threshold = rms_threshold
+        self.energy_fallback = energy_fallback
 
     def is_speech(self, frame: "np.ndarray") -> bool:
         """``frame`` is mono float32 in [-1, 1], exactly one VAD frame long."""
@@ -175,4 +174,4 @@ class WebrtcVad:
         if rms < self.rms_threshold:
             return False
         pcm16 = np.clip(frame * 32768.0, -32768, 32767).astype("<i2").tobytes()
-        return self._vad.is_speech(pcm16, self.sample_rate) or rms >= self.rms_threshold
+        return self.energy_fallback or self._vad.is_speech(pcm16, self.sample_rate)

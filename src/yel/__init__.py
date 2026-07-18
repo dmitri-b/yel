@@ -1,28 +1,23 @@
-"""``yel`` Python API.
+"""yel: script spoken turns against a local voice agent.
 
-The CLI is ``yel`` but the implementation package was historically ``agent_say``.
-This module makes the import name match the tool name, so callers can write:
-
-    from yel import Speaker
-    spk = Speaker("BlackHole 2ch")
-    spk.speak("what is the weather in Tokyo")
-
-It is a thin re-export of :mod:`agent_say`. ``Speaker`` / ``speak`` are the
-lightweight in-process API (only numpy + macOS ``say`` + sounddevice). The full
-speak-then-listen turn (``run_turn`` / ``AgentSaySettings``) is imported lazily so
-that consumers of just the speaker API don't need yel's heavier deps (pydantic).
+Use :class:`Speaker` / :func:`speak` for lightweight in-process speech output.
+The full speak-then-listen turn and validated settings are imported lazily so
+speaker-only callers don't load the heavier configuration stack.
 """
-from agent_say.api import Speaker, speak
+
+from .api import Speaker, speak
 
 __version__ = "0.1.0"
-__all__ = ["Speaker", "speak", "run_turn", "AgentSaySettings", "__version__"]
+__all__ = ["Speaker", "speak", "run_turn", "Settings", "__version__"]
 
 
-def __getattr__(name: str):  # PEP 562 — lazy heavy imports
+def __getattr__(name: str):
     if name == "run_turn":
-        from agent_say.runner import run_turn
+        from .runner import run_turn
+
         return run_turn
-    if name == "AgentSaySettings":
-        from agent_say.config import AgentSaySettings
-        return AgentSaySettings
+    if name == "Settings":
+        from .config import Settings
+
+        return Settings
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

@@ -65,6 +65,11 @@ def _resolve(device: str | int | None, *, want_output: bool) -> int | None:
     ]
     if not matches:
         direction = "output" if want_output else "input"
+        if "blackhole" in needle:
+            raise DeviceNotFoundError(
+                f"BlackHole device {device!r} is not installed or has no {direction} channels. "
+                "Install it with: brew install --cask blackhole-2ch"
+            )
         raise DeviceNotFoundError(f"No {direction} device matching {device!r}.")
     return matches[0]
 
@@ -73,8 +78,20 @@ def resolve_output_device(device: str | int | None) -> int | None:
     return _resolve(device, want_output=True)
 
 
-def resolve_input_device(device: str | int | None) -> int | None:
-    return _resolve(device, want_output=False)
+def resolve_input_device(device: str) -> int:
+    """Resolve Yel's required BlackHole capture device.
+
+    Unlike output resolution, input resolution deliberately has no physical or
+    system-default fallback. Real outputs remain valid only for speaker mirroring.
+    """
+    if not isinstance(device, str) or "blackhole" not in device.casefold():
+        raise DeviceNotFoundError(
+            "Yel's listen device must be BlackHole; physical and system-default "
+            "microphone routes are not supported."
+        )
+    resolved = _resolve(device, want_output=False)
+    assert resolved is not None
+    return resolved
 
 
 # Output devices the operator cannot physically hear — virtual loopbacks used to
@@ -103,14 +120,7 @@ def is_virtual_output(device: str | int | None) -> bool:
     ``None`` (system default) is treated as real — we only mirror when the user
     explicitly routes the prompt to a virtual device.
     """
-    if device is None:
-        return False
-    if isinstance(device, str):
-        return is_virtual_name(device)
-    devices = _sd().query_devices()
-    if 0 <= device < len(devices):
-        return is_virtual_name(devices[device]["name"])
-    return False
+    return is_virtual_device(device)
 
 
 def is_virtual_device(device: str | int | None) -> bool:
@@ -173,8 +183,7 @@ def play(
             errors.append(exc)
 
     threads = [
-        threading.Thread(target=_run, args=(dev,), daemon=True)
-        for dev in (device, mirror_device)
+        threading.Thread(target=_run, args=(dev,), daemon=True) for dev in (device, mirror_device)
     ]
     for t in threads:
         t.start()

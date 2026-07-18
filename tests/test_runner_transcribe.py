@@ -2,9 +2,9 @@
 
 import numpy as np
 
-from agent_say import audio, runner, transcribe, tts
-from agent_say.config import AgentSaySettings
-from agent_say.vad import SpeechState
+from yel import audio, runner, transcribe, tts
+from yel.config import Settings
+from yel.vad import SpeechState
 
 
 def _patch_audio(monkeypatch):
@@ -17,44 +17,44 @@ def _patch_audio(monkeypatch):
 def test_transcribes_and_prints_on_success(monkeypatch, capsys):
     _patch_audio(monkeypatch)
     clip = np.ones(480, dtype=np.float32)
+    seen = {}
+
+    def fake_transcribe(samples, sr, *, locale, timeout=60.0):
+        seen["samples"] = samples
+        seen["sample_rate"] = sr
+        seen["locale"] = locale
+        return "a quick greek salad"
+
     monkeypatch.setattr(
         runner,
         "_listen_for_turn_end",
-        lambda *a, **k: (SpeechState.ENDED, clip, 1.234),
+        lambda *_args, **_kwargs: (SpeechState.ENDED, clip, 1.234),
     )
-    seen = {}
-
-    def fake_transcribe(samples, sr, *, api_key, model, timeout=30.0):
-        seen["api_key"] = api_key
-        seen["model"] = model
-        return "a quick greek salad"
-
     monkeypatch.setattr(transcribe, "transcribe", fake_transcribe)
 
-    settings = AgentSaySettings(
-        _env_file=None, transcribe=True, deepgram_api_key="k", deepgram_model="nova-3"
-    )
+    settings = Settings(transcribe=True, transcription_locale="en-GB")
     code = runner.run_turn("recipe?", settings)
     out = capsys.readouterr().out
     assert code == 0
     assert "a quick greek salad" in out  # transcript on stdout
-    assert seen == {"api_key": "k", "model": "nova-3"}
+    assert seen["sample_rate"] == 16_000
+    assert seen["locale"] == "en-GB"
+    assert seen["samples"] is clip
 
 
 def test_transcription_failure_is_nonfatal(monkeypatch, capsys):
     _patch_audio(monkeypatch)
-    clip = np.ones(480, dtype=np.float32)
     monkeypatch.setattr(
         runner,
         "_listen_for_turn_end",
-        lambda *a, **k: (SpeechState.ENDED, clip, 0.75),
+        lambda *a, **k: (SpeechState.ENDED, np.ones(480, dtype=np.float32), 0.75),
     )
 
-    def boom(*a, **k):
+    def fail(*args, **kwargs):
         raise transcribe.TranscriptionError("nope")
 
-    monkeypatch.setattr(transcribe, "transcribe", boom)
-    settings = AgentSaySettings(_env_file=None, transcribe=True, deepgram_api_key="k")
+    monkeypatch.setattr(transcribe, "transcribe", fail)
+    settings = Settings(transcribe=True)
     code = runner.run_turn("hi", settings)
     # Turn still succeeded; transcription failure must not change the exit code.
     assert code == 0
@@ -66,14 +66,14 @@ def test_no_transcription_when_disabled(monkeypatch, capsys):
     monkeypatch.setattr(
         runner,
         "_listen_for_turn_end",
-        lambda *a, **k: (SpeechState.ENDED, None, 0.5),
+        lambda *a, **k: (SpeechState.ENDED, np.ones(480, dtype=np.float32), 0.5),
     )
 
     def must_not_call(*a, **k):
-        raise AssertionError("transcribe should not be called when disabled")
+        raise AssertionError("native transcription should not run when disabled")
 
     monkeypatch.setattr(transcribe, "transcribe", must_not_call)
-    settings = AgentSaySettings(_env_file=None, transcribe=False)
+    settings = Settings(transcribe=False)
     assert runner.run_turn("hi", settings) == 0
 
 
@@ -87,7 +87,7 @@ def test_virtual_listen_device_uses_lower_rms_floor(monkeypatch):
 
     monkeypatch.setattr(runner, "_listen_for_turn_end", fake_listen)
 
-    settings = AgentSaySettings(_env_file=None, listen_device="BlackHole 2ch")
+    settings = Settings(listen_device="BlackHole 2ch")
     assert runner.run_turn("hi", settings) == 0
     assert seen["rms_threshold"] == runner.VIRTUAL_LISTEN_RMS_THRESHOLD
 
@@ -102,13 +102,24 @@ def test_explicit_rms_floor_is_not_changed_for_virtual_listen_device(monkeypatch
 
     monkeypatch.setattr(runner, "_listen_for_turn_end", fake_listen)
 
-    settings = AgentSaySettings(
-        _env_file=None,
+    settings = Settings(
         listen_device="BlackHole 2ch",
         rms_threshold=0.004,
     )
     assert runner.run_turn("hi", settings) == 0
     assert seen["rms_threshold"] == 0.004
+
+
+def test_blackhole_listen_always_enables_energy_fallback(monkeypatch):
+    seen = {}
+    monkeypatch.setattr(
+        runner,
+        "WebrtcVad",
+        lambda **kwargs: seen.update(kwargs) or object(),
+    )
+
+    runner._build_vad(Settings(listen_device="BlackHole 2ch"))
+    assert seen["energy_fallback"] is True
 
 
 def test_reports_ttfa_for_each_successful_turn(monkeypatch):
@@ -121,7 +132,7 @@ def test_reports_ttfa_for_each_successful_turn(monkeypatch):
     messages = []
     monkeypatch.setattr(runner, "_log", lambda message, **_kwargs: messages.append(message))
 
-    assert runner.run_turn("hi", AgentSaySettings(_env_file=None)) == 0
+    assert runner.run_turn("hi", Settings()) == 0
     assert "yel: TTFA: 1234 ms" in messages
 
 
@@ -135,5 +146,5 @@ def test_reports_unavailable_ttfa_when_agent_never_speaks(monkeypatch):
     messages = []
     monkeypatch.setattr(runner, "_log", lambda message, **_kwargs: messages.append(message))
 
-    assert runner.run_turn("hi", AgentSaySettings(_env_file=None)) != 0
+    assert runner.run_turn("hi", Settings()) != 0
     assert "yel: TTFA: n/a" in messages

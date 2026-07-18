@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from collections.abc import Iterable
-from pathlib import Path
 from typing import Any
 
 from rich import box
@@ -62,38 +61,3 @@ def print_devices_table(
         )
 
     console.print(table)
-
-
-def print_settings_table(rows: Iterable[tuple[str, object]]) -> None:
-    """Render resolved configuration as a table."""
-    table = Table(
-        title="Resolved configuration",
-        box=box.SIMPLE_HEAD,
-        title_style="bold",
-        header_style="bold cyan",
-    )
-    table.add_column("Setting", style="cyan", no_wrap=True)
-    table.add_column("Value")
-
-    for key, value in rows:
-        table.add_row(key, repr(value))
-
-    console.print(table)
-
-
-def print_path_status(path: Path, *, found: bool) -> None:
-    """Render the resolved .env path status."""
-    table = Table(box=box.SIMPLE_HEAD, header_style="bold cyan")
-    table.add_column("Config file")
-    table.add_column("Status", no_wrap=True)
-    table.add_row(str(path), "found" if found else "not found")
-    console.print(table)
-
-
-def print_check(name: str, *, ok: bool, detail: str) -> None:
-    """Render one doctor check."""
-    label = "ok" if ok else "fail"
-    style = "green" if ok else "bold red"
-    console.print(
-        Text.assemble((f"{label:>4}", style), "  ", (name, "bold"), f"  {detail}")
-    )

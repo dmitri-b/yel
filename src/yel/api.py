@@ -9,11 +9,12 @@ mic. Use a persistent :class:`Speaker` instead — it resolves the output device
 once and renders + plays every prompt from the SAME process.
 
 Example:
-    from agent_say.api import Speaker
+    from yel import Speaker
     spk = Speaker("BlackHole 2ch")          # resolve device once
     spk.speak("what is the weather in Tokyo")
     spk.speak("tell me a joke")             # same process, same stream backend
 """
+
 from __future__ import annotations
 
 import numpy as np
@@ -34,17 +35,20 @@ class Speaker:
 
     def __init__(
         self,
-        out_device: str | int | None = DEFAULT_OUT_DEVICE,
+        out_device: str = DEFAULT_OUT_DEVICE,
         *,
         sample_rate: int = DEFAULT_SAMPLE_RATE,
         mirror_device: str | int | None = None,
     ) -> None:
+        if not isinstance(out_device, str) or "blackhole" not in out_device.casefold():
+            raise ValueError(
+                "out_device must name a BlackHole device; physical and "
+                "system-default output routes are not supported"
+            )
         self.sample_rate = sample_rate
         self.out_device = audio.resolve_output_device(out_device)
         self.mirror_device = (
-            audio.resolve_output_device(mirror_device)
-            if mirror_device is not None
-            else None
+            audio.resolve_output_device(mirror_device) if mirror_device is not None else None
         )
 
     def speak(self, text: str, *, language: str | None = None) -> np.ndarray:
@@ -62,13 +66,13 @@ class Speaker:
 def speak(
     text: str,
     *,
-    out_device: str | int | None = DEFAULT_OUT_DEVICE,
+    out_device: str = DEFAULT_OUT_DEVICE,
     sample_rate: int = DEFAULT_SAMPLE_RATE,
     mirror_device: str | int | None = None,
     language: str | None = None,
 ) -> np.ndarray:
     """One-shot convenience wrapper around :meth:`Speaker.speak`. Prefer a
     long-lived :class:`Speaker` when speaking multiple turns."""
-    return Speaker(
-        out_device, sample_rate=sample_rate, mirror_device=mirror_device
-    ).speak(text, language=language)
+    return Speaker(out_device, sample_rate=sample_rate, mirror_device=mirror_device).speak(
+        text, language=language
+    )

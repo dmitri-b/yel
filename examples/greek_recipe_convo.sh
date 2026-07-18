@@ -11,7 +11,7 @@ cd "$(dirname "$0")/.." || exit 1
 
 # Aliases aren't expanded in non-interactive shells unless we opt in.
 shopt -s expand_aliases
-alias yel="uv run yel --out 'BlackHole 2ch'"
+alias yel="uv run yel --out 'BlackHole 2ch' --listen 'BlackHole 2ch' --speaker-output"
 
 yel Hi can you recommend a quick Greek dinner I can make in under thirty minutes \
   && yel That sounds great what ingredients do I need and roughly how much of each \

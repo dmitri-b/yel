@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import pytest
 
-from agent_say import tts
-from agent_say.errors import TTSError
+from yel import tts
+from yel.errors import TTSError
 
 
 INVENTORY = """\

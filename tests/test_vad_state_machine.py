@@ -5,7 +5,7 @@ from types import SimpleNamespace
 
 import numpy as np
 
-from agent_say.vad import SpeechState, TurnEndDetector, WebrtcVad
+from yel.vad import SpeechState, TurnEndDetector, WebrtcVad
 
 
 def _drive(detector, samples, frame_ms=30, t0=0.0):
@@ -22,7 +22,7 @@ def _drive(detector, samples, frame_ms=30, t0=0.0):
 
 
 def make(**kw):
-    base = dict(start_timeout=5.0, end_silence=1.0, min_speech=0.3, overall_timeout=60.0)
+    base = dict(start_timeout=5.0, end_silence=1.0, min_speech=0.3)
     base.update(kw)
     return TurnEndDetector(**base)
 
@@ -104,13 +104,6 @@ def test_no_speech_times_out():
     assert state is SpeechState.TIMEOUT_NO_SPEECH
 
 
-def test_overall_timeout_while_speaking():
-    d = make(start_timeout=5.0, end_silence=100.0, overall_timeout=3.0)
-    # Keep speaking forever; overall watchdog fires first.
-    state = _drive(d, [True] * 1000)
-    assert state is SpeechState.TIMEOUT_OVERALL
-
-
 def test_response_timeout_caps_while_speaking():
     # Agent talks well past the 1.5s cap -> TIMED_OUT_OK (success), not still SPEAKING.
     d = make(min_speech=0.3, end_silence=100.0, response_timeout=1.5)
@@ -134,9 +127,10 @@ def test_turn_end_before_cap_still_wins():
 
 
 def test_no_response_timeout_keeps_default_behavior():
-    # Without a cap, a long reply just stays SPEAKING (no premature exit).
+    # Without --timeout, even 90 seconds of speech stays active. Process-level
+    # caps belong to Unix timeout tools rather than this detector.
     d = make(min_speech=0.3, end_silence=100.0)  # response_timeout defaults to None
-    state = _drive(d, [True] * 200)
+    state = _drive(d, [True] * 3000)
     assert state is SpeechState.SPEAKING
 
 
@@ -168,7 +162,26 @@ def test_webrtc_vad_uses_energy_fallback_for_loopback_audio(monkeypatch):
             return False
 
     monkeypatch.setitem(sys.modules, "webrtcvad", SimpleNamespace(Vad=RejectingVad))
-    vad = WebrtcVad(aggressiveness=2, sample_rate=16_000, rms_threshold=0.01)
+    vad = WebrtcVad(
+        aggressiveness=2,
+        sample_rate=16_000,
+        rms_threshold=0.01,
+        energy_fallback=True,
+    )
 
     assert vad.is_speech(np.full(480, 0.02, dtype=np.float32)) is True
     assert vad.is_speech(np.full(480, 0.005, dtype=np.float32)) is False
+
+
+def test_webrtc_vad_rejection_is_respected_for_normal_inputs(monkeypatch):
+    class RejectingVad:
+        def __init__(self, _aggressiveness):
+            pass
+
+        def is_speech(self, _pcm16, _sample_rate):
+            return False
+
+    monkeypatch.setitem(sys.modules, "webrtcvad", SimpleNamespace(Vad=RejectingVad))
+    vad = WebrtcVad(aggressiveness=2, sample_rate=16_000, rms_threshold=0.01)
+
+    assert vad.is_speech(np.full(480, 0.02, dtype=np.float32)) is False
