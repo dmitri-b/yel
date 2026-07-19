@@ -14,11 +14,11 @@ microphone input.
 
 ## Requirements
 
-- macOS 26 or newer
-- Python 3.11 or newer
-- [`uv`](https://docs.astral.sh/uv/getting-started/installation/)
+- macOS 26 (Tahoe, released September 15, 2025) or newer
+- Python 3.11+
+- [uv](https://docs.astral.sh/uv/getting-started/installation/)
 - [BlackHole 2ch](https://github.com/ExistentialAudio/BlackHole)
-- Xcode 26 or its Command Line Tools for the first transcription run
+- [Xcode 26](https://apps.apple.com/app/xcode/id497799835) or its [Command Line Tools](https://developer.apple.com/download/all/) (`xcode-select --install`) for the local transcription function
 
 Yel uses macOS `say` for speech and Apple Speech for transcription. No API key
 or external speech service is required.
